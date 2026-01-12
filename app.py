@@ -1,5 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
+import pandas as pd
 
 # --- KONFIGURACJA POŁĄCZENIA ---
 URL = "https://ljydyjsvbeiwuxsrsyqq.supabase.co"
@@ -15,60 +16,70 @@ except Exception as e:
     st.error(f"Błąd połączenia: {e}")
     st.stop()
 
-# --- NOWY STYL I KONFIGURACJA ---
-st.set_page_config(page_title="Inwentaryzacja IT", layout="wide")
-st.title("🖥️ System Inwentaryzacji Sprzętu IT")
+# --- KONFIGURACJA STRONY ---
+st.set_page_config(page_title="Inwentaryzacja IT", layout="wide", page_icon="💻")
+st.title("🖥️ System Zarządzania Zasobami IT")
+st.markdown("Automatyczna ewidencja sprzętu i licencji w podziale na działy.")
 st.markdown("---")
 
 # --- ZAKŁADKI ---
-tab1, tab2, tab3 = st.tabs(["📋 Ewidencja Sprzętu", "📁 Zarządzanie Działami", "📈 Raport i Statystyki"])
+tab1, tab2, tab3 = st.tabs(["📦 Ewidencja Sprzętu", "🏢 Działy i Kategorie", "📊 Raporty"])
 
-# --- TAB 2: ZARZĄDZANIE DZIAŁAMI (Tabela Kategorie) ---
+# --- TAB 2: DZIAŁY I KATEGORIE (Tabela Kategorie) ---
 with tab2:
-    st.header("Konfiguracja Działów/Grup")
+    st.header("Zarządzanie strukturą")
     col_a, col_b = st.columns([1, 2])
     
     with col_a:
+        st.subheader("Dodaj nową kategorię")
+        # Przykłady profesjonalnych kategorii w placeholderach
         with st.form("dept_form", clear_on_submit=True):
-            nazwa_dzialu = st.text_input("Nazwa grupy (np. Serwerownia, Biuro)")
-            opis_dzialu = st.text_area("Notatki dodatkowe")
-            submit_dept = st.form_submit_button("Utwórz grupę")
+            nazwa_dzialu = st.text_input("Nazwa (np. Infrastruktura, Deweloperzy, Zarząd)")
+            opis_dzialu = st.text_area("Opis kategorii/lokalizacja")
+            submit_dept = st.form_submit_button("Zatwierdź kategorię")
 
             if submit_dept and nazwa_dzialu:
                 try:
                     supabase.table("Kategorie").insert({"nazwa": nazwa_dzialu, "opis": opis_dzialu}).execute()
-                    st.success("Grupa została utworzona!")
+                    st.success(f"Dodano kategorię: {nazwa_dzialu}")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Błąd: {e}")
+                    st.error(f"Błąd zapisu: {e}")
 
     with col_b:
-        st.subheader("Istniejące grupy")
-        depts = supabase.table("Kategorie").select("nazwa, opis").execute()
-        if depts.data:
-            st.table(depts.data)
+        st.subheader("Zdefiniowane działy")
+        try:
+            depts = supabase.table("Kategorie").select("id, nazwa, opis").execute()
+            if depts.data:
+                # Wyświetlamy ładną tabelę bez kolumny ID dla użytkownika
+                df_depts = pd.DataFrame(depts.data)
+                st.dataframe(df_depts[['nazwa', 'opis']], use_container_width=True)
+            else:
+                st.info("Brak zdefiniowanych kategorii. Dodaj pierwszą, np. 'Sprzęt Biurowy'.")
+        except:
+            st.error("Nie udało się pobrać kategorii.")
 
 # --- TAB 1: EWIDENCJA SPRZĘTU (Tabela Produkty) ---
 with tab1:
-    st.header("Rejestracja Nowego Urządzenia")
+    st.header("Rejestracja Zasobów")
     
-    # Pobranie kategorii
+    # Pobranie kategorii do selectboxa
     kat_res = supabase.table("Kategorie").select("id, nazwa").execute()
     kat_list = {item['nazwa']: item['id'] for item in kat_res.data} if kat_res.data else {}
 
     if not kat_list:
-        st.info("⚠️ Najpierw zdefiniuj grupy w zakładce 'Zarządzanie Działami'.")
+        st.warning("⚠️ Baza kategorii jest pusta. Przejdź do zakładki 'Działy i Kategorie', aby zacząć.")
     else:
         with st.form("asset_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                model = st.text_input("Model/Nazwa urządzenia")
-                ilosc = st.number_input("Ilość jednostek", min_value=1, step=1)
+                model = st.text_input("Nazwa urządzenia (np. MacBook Pro M3, Monitor Dell 27')")
+                ilosc = st.number_input("Sztuk w magazynie", min_value=1, step=1)
             with c2:
-                cena_zakupu = st.number_input("Wartość jednostkowa (PLN)", min_value=0.0)
-                przypisanie = st.selectbox("Lokalizacja/Grupa", options=list(kat_list.keys()))
+                cena_zakupu = st.number_input("Wartość netto (PLN)", min_value=0.0, format="%.2f")
+                przypisanie = st.selectbox("Przypisz do kategorii", options=list(kat_list.keys()))
             
-            submit_asset = st.form_submit_button("Dodaj do ewidencji")
+            submit_asset = st.form_submit_button("Zapisz w ewidencji")
 
             if submit_asset and model:
                 try:
@@ -79,29 +90,36 @@ with tab1:
                         "kategorie_id": kat_list[przypisanie]
                     }
                     supabase.table("Produkty").insert(asset_data).execute()
-                    st.success(f"Dodano: {model}")
+                    st.success(f"Pomyślnie zarejestrowano: {model}")
                 except Exception as e:
-                    st.error(f"Błąd zapisu: {e}")
+                    st.error(f"Błąd RLS lub bazy: {e}")
 
-# --- TAB 3: RAPORT I STATYSTYKI ---
+# --- TAB 3: RAPORTY ---
 with tab3:
-    st.header("Podsumowanie zasobów")
+    st.header("Analityka Zasobów")
     
-    # Pobranie danych do raportu
-    res = supabase.table("Produkty").select("nazwa, liczba, cena").execute()
+    # Pobieramy produkty i łączymy z kategoriami (jeśli to możliwe)
+    res = supabase.table("Produkty").select("nazwa, liczba, cena, kategorie_id").execute()
     
     if res.data:
-        import pandas as pd
         df = pd.DataFrame(res.data)
-        df['Wartość całkowita'] = df['liczba'] * df['cena']
+        df['Wartość łączna'] = df['liczba'] * df['cena']
         
-        # Statystyki u góry
+        # Dashboard
         m1, m2, m3 = st.columns(3)
-        m1.metric("Suma urządzeń", int(df['liczba'].sum()))
-        m2.metric("Łączna wartość sprzętu", f"{df['Wartość całkowita'].sum():,.2f} PLN")
-        m3.metric("Najdroższy typ", df.loc[df['cena'].idxmax()]['nazwa'])
+        m1.metric("Liczba urządzeń", f"{int(df['liczba'].sum())} szt.")
+        m2.metric("Wartość majątku", f"{df['Wartość łączna'].sum():,.2f} PLN")
         
-        st.subheader("Pełna lista inwentarzowa")
-        st.dataframe(df, use_container_width=True)
+        # Mapowanie ID kategorii na nazwę dla czytelności
+        if not df.empty:
+            cat_map = {v: k for k, v in kat_list.items()}
+            df['Kategoria'] = df['kategorie_id'].map(cat_map)
+            
+            st.subheader("Szczegółowa lista inwentarzowa")
+            st.dataframe(df[['Kategoria', 'nazwa', 'liczba', 'cena', 'Wartość łączna']], use_container_width=True)
+            
+            # Prosty wykres kołowy podziału wartości
+            st.subheader("Podział wartości na urządzenia")
+            st.bar_chart(df.set_index('nazwa')['Wartość łączna'])
     else:
-        st.info("Baza jest pusta.")
+        st.info("Brak danych do wygenerowania raportu.")
