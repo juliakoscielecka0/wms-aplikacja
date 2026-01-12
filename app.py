@@ -19,107 +19,109 @@ except Exception as e:
 # --- KONFIGURACJA STRONY ---
 st.set_page_config(page_title="Inwentaryzacja IT", layout="wide", page_icon="💻")
 st.title("🖥️ System Zarządzania Zasobami IT")
-st.markdown("Automatyczna ewidencja sprzętu i licencji w podziale na działy.")
-st.markdown("---")
 
 # --- ZAKŁADKI ---
-tab1, tab2, tab3 = st.tabs(["📦 Ewidencja Sprzętu", "🏢 Działy i Kategorie", "📊 Raporty"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📦 Ewidencja", 
+    "🏢 Kategorie", 
+    "📊 Raporty i Usuwanie", 
+    "🚨 Zgłoś Szkodę"
+])
 
-# --- TAB 2: DZIAŁY I KATEGORIE (Tabela Kategorie) ---
+# --- TAB 2: KATEGORIE ---
 with tab2:
     st.header("Zarządzanie strukturą")
     col_a, col_b = st.columns([1, 2])
-    
     with col_a:
-        st.subheader("Dodaj nową kategorię")
-        # Przykłady profesjonalnych kategorii w placeholderach
         with st.form("dept_form", clear_on_submit=True):
-            nazwa_dzialu = st.text_input("Nazwa (np. Infrastruktura, Deweloperzy, Zarząd)")
-            opis_dzialu = st.text_area("Opis kategorii/lokalizacja")
-            submit_dept = st.form_submit_button("Zatwierdź kategorię")
-
+            nazwa_dzialu = st.text_input("Nowa kategoria (np. Laptopy)")
+            submit_dept = st.form_submit_button("Dodaj")
             if submit_dept and nazwa_dzialu:
-                try:
-                    supabase.table("Kategorie").insert({"nazwa": nazwa_dzialu, "opis": opis_dzialu}).execute()
-                    st.success(f"Dodano kategorię: {nazwa_dzialu}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Błąd zapisu: {e}")
-
+                supabase.table("Kategorie").insert({"nazwa": nazwa_dzialu}).execute()
+                st.success("Dodano!")
+                st.rerun()
     with col_b:
-        st.subheader("Zdefiniowane działy")
-        try:
-            depts = supabase.table("Kategorie").select("id, nazwa, opis").execute()
-            if depts.data:
-                # Wyświetlamy ładną tabelę bez kolumny ID dla użytkownika
-                df_depts = pd.DataFrame(depts.data)
-                st.dataframe(df_depts[['nazwa', 'opis']], use_container_width=True)
-            else:
-                st.info("Brak zdefiniowanych kategorii. Dodaj pierwszą, np. 'Sprzęt Biurowy'.")
-        except:
-            st.error("Nie udało się pobrać kategorii.")
+        depts = supabase.table("Kategorie").select("nazwa").execute()
+        if depts.data:
+            st.write("Istniejące kategorie:", ", ".join([d['nazwa'] for d in depts.data]))
 
-# --- TAB 1: EWIDENCJA SPRZĘTU (Tabela Produkty) ---
+# --- TAB 1: EWIDENCJA ---
 with tab1:
     st.header("Rejestracja Zasobów")
-    
-    # Pobranie kategorii do selectboxa
     kat_res = supabase.table("Kategorie").select("id, nazwa").execute()
     kat_list = {item['nazwa']: item['id'] for item in kat_res.data} if kat_res.data else {}
 
     if not kat_list:
-        st.warning("⚠️ Baza kategorii jest pusta. Przejdź do zakładki 'Działy i Kategorie', aby zacząć.")
+        st.warning("Najpierw dodaj kategorię!")
     else:
         with st.form("asset_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            with c1:
-                model = st.text_input("Nazwa urządzenia (np. MacBook Pro M3, Monitor Dell 27')")
-                ilosc = st.number_input("Sztuk w magazynie", min_value=1, step=1)
-            with c2:
-                cena_zakupu = st.number_input("Wartość netto (PLN)", min_value=0.0, format="%.2f")
-                przypisanie = st.selectbox("Przypisz do kategorii", options=list(kat_list.keys()))
-            
-            submit_asset = st.form_submit_button("Zapisz w ewidencji")
+            model = c1.text_input("Nazwa urządzenia")
+            ilosc = c1.number_input("Sztuk", min_value=1)
+            cena = c2.number_input("Wartość (PLN)", min_value=0.0)
+            kat = c2.selectbox("Kategoria", options=list(kat_list.keys()))
+            if st.form_submit_button("Zapisz"):
+                supabase.table("Produkty").insert({
+                    "nazwa": model, "liczba": ilosc, "cena": cena, "kategorie_id": kat_list[kat]
+                }).execute()
+                st.success("Zapisano!")
 
-            if submit_asset and model:
-                try:
-                    asset_data = {
-                        "nazwa": model,
-                        "liczba": ilosc,
-                        "cena": cena_zakupu,
-                        "kategorie_id": kat_list[przypisanie]
-                    }
-                    supabase.table("Produkty").insert(asset_data).execute()
-                    st.success(f"Pomyślnie zarejestrowano: {model}")
-                except Exception as e:
-                    st.error(f"Błąd RLS lub bazy: {e}")
-
-# --- TAB 3: RAPORTY ---
+# --- TAB 3: RAPORTY I USUWANIE ---
 with tab3:
-    st.header("Analityka Zasobów")
-    
-    # Pobieramy produkty i łączymy z kategoriami (jeśli to możliwe)
-    res = supabase.table("Produkty").select("nazwa, liczba, cena, kategorie_id").execute()
+    st.header("Pełna Lista i Zarządzanie")
+    res = supabase.table("Produkty").select("*").execute()
     
     if res.data:
         df = pd.DataFrame(res.data)
-        df['Wartość łączna'] = df['liczba'] * df['cena']
+        st.dataframe(df[['id', 'nazwa', 'liczba', 'cena']], use_container_width=True)
         
-        # Dashboard
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Liczba urządzeń", f"{int(df['liczba'].sum())} szt.")
-        m2.metric("Wartość majątku", f"{df['Wartość łączna'].sum():,.2f} PLN")
-        
-        # Mapowanie ID kategorii na nazwę dla czytelności
-        if not df.empty:
-            cat_map = {v: k for k, v in kat_list.items()}
-            df['Kategoria'] = df['kategorie_id'].map(cat_map)
-            
-            st.subheader("Szczegółowa lista inwentarzowa")
-            st.dataframe(df[['Kategoria', 'nazwa', 'liczba', 'cena', 'Wartość łączna']], use_container_width=True)
-            
-            # Prosty wykres kołowy podziału wartości
-            st.subheader("Podział wartości na urządzenia")
-            st.bar_chart(df.set_index('nazwa')['Wartość łączna'])
+        st.subheader("🗑️ Usuń produkt z bazy")
+        with st.form("delete_form"):
+            id_to_delete = st.number_input("Podaj ID produktu do usunięcia", min_value=1, step=1)
+            confirm = st.checkbox("Potwierdzam chęć trwałego usunięcia")
+            if st.form_submit_button("Usuń bezpowrotnie"):
+                if confirm:
+                    try:
+                        supabase.table("Produkty").delete().eq("id", id_to_delete).execute()
+                        st.success(f"Usunięto produkt o ID {id_to_delete}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd: {e}")
+                else:
+                    st.warning("Musisz zaznaczyć potwierdzenie!")
     else:
-        st.info("Brak danych do wygenerowania raportu.")
+        st.info("Brak danych.")
+
+# --- TAB 4: ZGŁASZANIE SZKODY ---
+with tab4:
+    st.header("🚨 Formularz zgłoszenia uszkodzenia")
+    st.write("Wybierz produkt z listy, aby zgłosić jego uszkodzenie lub awarię.")
+    
+    prod_res = supabase.table("Produkty").select("id, nazwa, liczba").execute()
+    
+    if prod_res.data:
+        prod_options = {f"{p['nazwa']} (ID: {p['id']})": p for p in prod_res.data}
+        
+        with st.form("damage_form", clear_on_submit=True):
+            wybrany_label = st.selectbox("Wybierz uszkodzony sprzęt", options=list(prod_options.keys()))
+            opis_szkody = st.text_area("Opis usterki")
+            czy_wycofac = st.checkbox("Wycofaj jedną sztukę ze stanu magazynowego")
+            
+            if st.form_submit_button("Zgłoś szkodę"):
+                sprzet = prod_options[wybrany_label]
+                nowa_nazwa = f"⚠️ [SZKODA] {sprzet['nazwa']}"
+                nowa_liczba = sprzet['liczba'] - 1 if czy_wycofac and sprzet['liczba'] > 0 else sprzet['liczba']
+                
+                try:
+                    supabase.table("Produkty").update({
+                        "nazwa": nowa_nazwa, 
+                        "liczba": nowa_liczba
+                    }).eq("id", sprzet['id']).execute()
+                    
+                    st.warning(f"Zgłoszono szkodę dla: {sprzet['nazwa']}.")
+                    if czy_wycofac:
+                        st.write(f"Zaktualizowano stan magazynowy: {nowa_liczba} szt.")
+                except Exception as e:
+                    st.error(f"Błąd podczas aktualizacji: {e}")
+    else:
+        st.info("Brak produktów w bazie do zgłoszenia szkody.")
